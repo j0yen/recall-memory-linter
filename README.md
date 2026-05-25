@@ -2,6 +2,24 @@
 
 > Today's flat MEMORY.md store has no decay signal, no duplicate detection, and no link integrity check, so stale or contradictory notes silently mislead future sessions.
 
+## Install
+
+### One-liner
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/j0yen/recall-memory-linter/main/install.sh | bash
+```
+
+### Manual
+
+```sh
+git clone --depth 1 https://github.com/j0yen/recall-memory-linter.git
+cd recall-memory-linter
+./install.sh
+```
+
+Installs the `recall-lint` binary via `cargo install --path . --locked`. Requires `cargo` / `rustc 1.85+` and `git`. Built binary lands in `~/.cargo/bin/`.
+
 ## Why
 
 Today's flat MEMORY.md store has no decay signal, no duplicate detection, and no link integrity check, so stale or contradictory notes silently mislead future sessions. Before building retrieval, embeddings, or push-mode, prove the file layout is healthy: a deterministic linter that walks the Markdown memory store and reports stale, duplicate, and broken-link entries gives the user (and Claude) a trusted hygiene baseline to iterate retrieval against. This V1 slice does not retrieve, rank, or write memories; it only audits the on-disk corpus so later phases stand on a clean foundation.

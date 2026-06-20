@@ -1,16 +1,14 @@
 # recall-memory-linter
 
-> Today's flat MEMORY.md store has no decay signal, no duplicate detection, and no link integrity check, so stale or contradictory notes silently mislead future sessions.
+A deterministic linter that walks a Markdown memory store and reports the three ways it rots: stale entries, duplicates, and broken wiki-links.
+
+## Why it exists
+
+A flat pile of `MEMORY.md`-style notes degrades silently. Nothing tells you an entry is months stale, that two notes say the same thing, or that a `[[link]]` points at a file that no longer exists. The damage is invisible until a future session reads the corpus and is misled by it.
+
+The fix that pays off first isn't smarter retrieval — it's a clean foundation to retrieve against. Before embeddings or ranking earn their keep, the on-disk store has to be healthy, and "healthy" has to be something you can check on every run rather than trust. `recall-lint` is that check: it audits the corpus and reports what's wrong. It does not retrieve, rank, or rewrite anything — it only tells you the truth about the files.
 
 ## Install
-
-### One-liner
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/j0yen/recall-memory-linter/main/install.sh | bash
-```
-
-### Manual
 
 ```sh
 git clone --depth 1 https://github.com/j0yen/recall-memory-linter.git
@@ -18,53 +16,68 @@ cd recall-memory-linter
 ./install.sh
 ```
 
-Installs the `recall-lint` binary via `cargo install --path . --locked`. Requires `cargo` / `rustc 1.85+` and `git`. Built binary lands in `~/.cargo/bin/`.
-
-## Why
-
-Today's flat MEMORY.md store has no decay signal, no duplicate detection, and no link integrity check, so stale or contradictory notes silently mislead future sessions. Before building retrieval, embeddings, or push-mode, prove the file layout is healthy: a deterministic linter that walks the Markdown memory store and reports stale, duplicate, and broken-link entries gives the user (and Claude) a trusted hygiene baseline to iterate retrieval against. This V1 slice does not retrieve, rank, or write memories; it only audits the on-disk corpus so later phases stand on a clean foundation.
-
-## Build
+`install.sh` runs `cargo install --path . --locked` and drops the `recall-lint` binary in `~/.cargo/bin/`. Requires `cargo` / `rustc` 1.85+ and `git`. To build without installing:
 
 ```sh
-cargo build --release
+cargo build --release   # → target/release/recall-lint
 ```
 
-Produces `target/release/recall-lint`. Symlink into `~/.local/bin/` if you want it on `$PATH`.
+## Quickstart
 
-## Usage
+Point it at a memory root. An empty or clean store exits `0`:
 
 ```sh
-recall-lint --help
+$ recall-lint ./memory
+$ echo $?
+0
 ```
 
-## Audience
+A store with problems reports them and exits `1`:
 
-Single user (the author) on one laptop running Claude Code, plus the Claude sessions that read/write ~/.claude/recall/. Linter is invoked manually from a shell or by a scheduled hook; output is consumed by humans reading the terminal and by tooling parsing JSON.
+```sh
+$ recall-lint ./memory
+broken_link: ./memory/plan.md:12 → [[archived-spec]]
+duplicate: ./memory/a.md, ./memory/copy-of-a.md
+stale: ./memory/old-note.md (last_seen=2026-04-01, age=79d)
+```
 
-## Acceptance criteria
+For tooling, ask for JSON — a stable schema with a top-level `findings` array, sorted deterministically so runs on identical inputs diff cleanly:
 
-This project was scaffolded from a PRD via the `autobuilder` pipeline. The MUST-level acceptance criteria are:
+```sh
+$ recall-lint ./memory --format json
+{"findings":[{"kind":"broken_link","paths":["./memory/plan.md"],"target":"archived-spec","line":12}, ...]}
+```
 
-- **AC1**: CLI binary `recall-lint` accepts a positional path to a memory root directory and exits 0 when the directory is empty, emitting an empty findings array in JSON mode.
-- **AC2**: Walks the root recursively, treats every *.md file as a memory entry, and ignores non-Markdown files and dot-prefixed directories.
-- **AC3**: Parses YAML frontmatter (optional, fenced by ---). Recognizes `last_recalled_at` and `created_at` as RFC3339 timestamps; flags entries whose newest of (last_recalled_at, created_at, file mtime) is older than --stale-days (default 30) as ...
-- **AC4**: Detects duplicates: two entries with byte-identical body (post-frontmatter, trimmed) produce one finding kind=`duplicate` listing all paths in deterministic sorted order.
-- **AC5**: Detects broken `[[wiki-links]]`: a link `[[target]]` resolves if any *.md file under the root has stem `target` or relative path `target.md`; otherwise emits finding kind=`broken_link` with source path, target, and 1-indexed line number.
-- **AC6**: Output mode is selectable: `--format text` (default, human-readable, grouped by kind) or `--format json` (stable schema with top-level `findings` array; each finding has `kind`, `paths`, and kind-specific fields). JSON output is determin...
-- **AC7**: Exit code reflects findings: 0 = no findings, 1 = at least one finding, 2 = invocation error (bad path, unreadable file, malformed args). Exit codes are stable across runs on identical inputs.
+Options:
 
-Each AC has a matching integration test under `tests/acceptance_ac<n>.rs`.
+| Flag | Default | Effect |
+| --- | --- | --- |
+| `--format <text\|json>` | `text` | human-readable, grouped by kind, or stable JSON |
+| `--stale-days <N>` | `30` | flag entries whose newest timestamp is older than `N` days |
+| `--ignore <glob>` | — | root-relative glob to skip; repeatable |
+
+## What it checks
+
+Every `*.md` file under the root is one memory entry (non-Markdown files and dot-directories are skipped). Three findings:
+
+- **stale** — the newest of `last_recalled_at`, `created_at` (RFC3339, from optional YAML frontmatter), or file mtime is older than `--stale-days`.
+- **duplicate** — two or more entries share a byte-identical body after frontmatter is stripped and trimmed; one finding lists all paths.
+- **broken_link** — a `[[target]]` that no `*.md` file resolves, reported with source path and 1-indexed line.
+
+Exit codes are part of the contract: `0` clean, `1` findings present, `2` invocation error (bad path, unreadable file, malformed args).
+
+## Where it fits
+
+Part of the **recall** family — the agentic-memory stack. `recall-lint` is the hygiene gate; the other pieces handle storage, retrieval, and operations on top of a corpus it has vouched for.
+
+## Status
+
+V1, and deliberately narrow: it audits the on-disk corpus and nothing more. Retrieval, ranking, and write-back are later phases that stand on this clean foundation. Each acceptance criterion has a matching test under `tests/acceptance_ac<n>.rs`.
 
 ## Provenance
 
-Built via the [`autobuilder`](https://github.com/j0yen/autobuilder) pipeline (PRD intake -> intent-card -> scaffold -> iterate-and-prove). Originally consolidated as a subdir of the [`wintermute`](https://github.com/j0yen/wintermute) monorepo; this standalone repo is a fresh-init snapshot for easier consumption and distribution.
+Scaffolded from a PRD through the [`autobuilder`](https://github.com/j0yen/autobuilder) pipeline. Originally a subdirectory of the [`wintermute`](https://github.com/j0yen/wintermute) monorepo; this is a standalone snapshot for easier consumption.
 
 ## License
 
-Licensed under either of:
-
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
-- MIT license ([LICENSE-MIT](LICENSE-MIT))
-
-at your option.
+Licensed under either of Apache-2.0 ([LICENSE-APACHE](LICENSE-APACHE)) or MIT ([LICENSE-MIT](LICENSE-MIT)), at your option.
